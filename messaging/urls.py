@@ -1,7 +1,8 @@
-from django.urls import path
+from django.urls import path, re_path
 from . import views
 
 urlpatterns = [
+    re_path(r'^media/(?P<file_path>.+)$', views.serve_media_file, name='serve_media_file'),
     path('conversations/', views.conversations_list, name='conversations_list'),
     path('conversations/<int:conversation_id>/', views.conversation_detail, name='conversation_detail'),
     path('conversations/<int:conversation_id>/messages/', views.get_conversation_messages, name='conversation_messages'),

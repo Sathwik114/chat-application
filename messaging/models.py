@@ -143,7 +143,7 @@ class Message(models.Model):
     
     def save(self, *args, **kwargs):
         if self.media_file:
-            self.file_name = self.media_file.name
+            self.file_name = os.path.basename(self.media_file.name)
             self.file_size = self.media_file.size
             if not self.compressed_file_size:
                 self.compressed_file_size = self.media_file.size

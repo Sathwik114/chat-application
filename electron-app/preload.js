@@ -1,4 +1,4 @@
-const { ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 const AUTH_STORAGE_KEYS = ['user', 'token'];
 
@@ -20,6 +20,19 @@ function persistExistingAuthState() {
         }
     }
 }
+
+contextBridge.exposeInMainWorld('electronAPI', {
+    isElectron: true,
+    openFileExternal: (fileUrl, fileName) => {
+        ipcRenderer.send('file:open-external', fileUrl, fileName);
+    },
+    openFileBuffer: (buffer, fileName) => {
+        ipcRenderer.send('file:open-buffer', buffer, fileName);
+    },
+    openFileBrowser: (fileUrl) => {
+        ipcRenderer.send('file:open-browser', fileUrl);
+    }
+});
 
 restoreAuthState();
 persistExistingAuthState();
@@ -58,10 +71,17 @@ ipcRenderer.on('desktop:auth-state', () => {
     persistExistingAuthState();
 });
 
+ipcRenderer.on('desktop:notification-click', (event, payload) => {
+    window.postMessage({
+        type: 'desktop-notification-click',
+        notification: payload || {}
+    }, '*');
+});
+
 window.addEventListener('message', (event) => {
     const data = event.data || {};
     if (data.type === 'desktop-notification') {
-        ipcRenderer.send('notification:show', data.title, data.body);
+        ipcRenderer.send('notification:show', data.title, data.body, data.notification || {});
     }
 
     if (data.type === 'desktop-auth-set') {
@@ -75,5 +95,17 @@ window.addEventListener('message', (event) => {
 
     if (data.type === 'desktop-auth-clear') {
         ipcRenderer.send('auth:clear');
+    }
+
+    if (data.type === 'desktop-file-open') {
+        ipcRenderer.send('file:open-external', data.fileUrl, data.fileName);
+    }
+
+    if (data.type === 'desktop-file-open-browser') {
+        ipcRenderer.send('file:open-browser', data.fileUrl);
+    }
+
+    if (data.type === 'desktop-file-open-buffer') {
+        ipcRenderer.send('file:open-buffer', data.buffer, data.fileName);
     }
 });

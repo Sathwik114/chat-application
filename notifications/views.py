@@ -8,9 +8,22 @@ import json
 @login_required
 def notifications_list(request):
     """Get all notifications for the current user."""
-    notifications = Notification.objects.filter(
-        recipient=request.user
-    ).order_by('-created_at')[:50]
+    notifications = Notification.objects.filter(recipient=request.user)
+    since_id = request.GET.get('since_id')
+
+    if since_id:
+        try:
+            notifications = notifications.filter(id__gt=int(since_id))
+        except (TypeError, ValueError):
+            pass
+
+    if request.GET.get('unread_only') == '1':
+        notifications = notifications.filter(is_read=False)
+
+    if since_id:
+        notifications = notifications.order_by('id')[:50]
+    else:
+        notifications = notifications.order_by('-created_at')[:50]
     
     notifications_data = [
         {

@@ -47,7 +47,9 @@ class Command(BaseCommand):
         self.ensure_it_users()
 
         it_users = list(User.objects.filter(username__in=IT_MEMBERS.keys()).order_by('username'))
-        all_users = list(User.objects.filter(is_active=True).exclude(username='admin').order_by('username'))
+        all_users = list(
+            User.objects.filter(is_active=True, is_superuser=False).order_by('username')
+        )
         normal_users = [user for user in all_users if user.username not in IT_MEMBERS]
 
         if not it_users:
@@ -109,6 +111,7 @@ class Command(BaseCommand):
 
         self.stdout.write(f'Created {individual_count} new individual chats')
         self.stdout.write(f'Created {it_individual_count} new IT member individual chats')
+        self.remove_superusers_from_chats()
         self.stdout.write(self.style.SUCCESS('Default chat setup completed.'))
 
     def ensure_it_users(self):
@@ -154,6 +157,13 @@ class Command(BaseCommand):
             group.admins.add(admin)
 
         return group
+
+    def remove_superusers_from_chats(self):
+        superusers = User.objects.filter(is_superuser=True)
+        removed_count = ConversationParticipant.objects.filter(user__in=superusers).delete()[0]
+        for group in Group.objects.filter(admins__in=superusers).distinct():
+            group.admins.remove(*superusers)
+        self.stdout.write(f'Removed {removed_count} superuser chat memberships')
 
     def ensure_individual_chat(self, first_user, second_user):
         existing_chat = Conversation.objects.filter(

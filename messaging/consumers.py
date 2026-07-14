@@ -4,7 +4,7 @@ from channels.db import database_sync_to_async
 from django.contrib.auth import get_user_model
 from django.db.utils import OperationalError, ProgrammingError
 from .models import Message, Conversation, TypingIndicator, MessageReadReceipt, HelpDeskContainer, TaskChatMessage, TaskChatReadState
-from .utils import IT_MEMBER_USERNAMES, is_it_member_user, strip_invisible_marks
+from .utils import IT_MEMBER_USERNAMES, get_it_member_usernames, is_it_member_user, strip_invisible_marks
 from notifications.models import Notification
 from asgiref.sync import async_to_sync
 import asyncio
@@ -527,7 +527,7 @@ class TaskChatConsumer(AsyncWebsocketConsumer):
                 }
             )
 
-            # Update unread badges in real time for requester + assigned IT only (excluding sender).
+            # Update unread badges and notifications for requester, assigned IT, and IT help desk members.
             recipient_counts = await self.get_unread_counts_for_recipients(sender_id=self.user.id)
             for user_id, unread_count in recipient_counts.items():
                 await self.channel_layer.group_send(
@@ -547,7 +547,8 @@ class TaskChatConsumer(AsyncWebsocketConsumer):
                             'notification_type': 'task_chat_message',
                             'title': f'New task chat message',
                             'body': f'Task #{self.task_id} has a new message.',
-                            'conversation_id': None,
+                            'conversation_id': message.task.conversation_id,
+                            'task_id': int(self.task_id),
                             'message_id': message.id,
                             'created_at': message.timestamp.isoformat(),
                         }
@@ -593,8 +594,10 @@ class TaskChatConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def get_unread_counts_for_recipients(self, sender_id: int):
         """
-        Compute unread counts for the only users who should receive badge updates:
-        requester and taken_by. Other IT members do not get unread counts.
+        Compute unread counts for task-chat notification recipients.
+
+        Recipients are the requester, assigned IT member, and IT help desk
+        members who can see the task. The sender is excluded.
         """
         try:
             task = HelpDeskContainer.objects.get(container_id=self.task_id)
@@ -606,6 +609,12 @@ class TaskChatConsumer(AsyncWebsocketConsumer):
             recipient_ids.add(task.requester_id)
         if task.taken_by_id:
             recipient_ids.add(task.taken_by_id)
+
+        it_member_ids = task.conversation.participants.filter(
+            username__in=get_it_member_usernames(),
+            is_active=True,
+        ).values_list('id', flat=True)
+        recipient_ids.update(it_member_ids)
         recipient_ids.discard(sender_id)
 
         result = {}

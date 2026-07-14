@@ -19,7 +19,7 @@ npm start
 
 ## Features
 
-- **Server URL**: http://10.40.20.4:8001
+- **Server URL**: http://10.40.10.125:8001
 - **Full Screen Support**: Press F11
 - **Zoom Controls**: Ctrl+Plus, Ctrl+Minus, Ctrl+0
 - **Reload**: Ctrl+R
@@ -29,17 +29,17 @@ npm start
 ## Requirements
 
 - Node.js installed
-- Django server running on http://10.40.20.4:8001
+- Django server running on http://10.40.10.125:8001
 
 ## Output
 
 After building, the installer will be in:
 ```
-dist\Chat Desktop Setup 1.0.0.exe
+dist\IT Support Setup 1.0.14.exe
 ```
 
 ## Usage
 
-1. Make sure Django server is running on 10.40.20.4:8001
+1. Make sure Django server is running on 10.40.10.125:8001
 2. Run the desktop app
 3. Login and use the chat application

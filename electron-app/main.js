@@ -1,14 +1,18 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, shell, session, ipcMain, Notification } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, shell, session, ipcMain, Notification, net } = require('electron');
 const Store = require('electron-store');
 const path = require('path');
 const fs = require('fs');
 
-const APP_URL = 'http://10.40.20.4:8001';
+const APP_URL = 'http://10.40.10.125:8001';
 const APP_ORIGIN = new URL(APP_URL).origin;
 const APP_NAME = 'IT Support';
 const SESSION_PARTITION = 'persist:it-support';
 const AUTH_STORE_KEY = 'authState';
 const AUTH_STORAGE_KEYS = ['user', 'token'];
+const OUR_SITES = [
+    { label: 'GTI Central Portal', url: 'http://10.40.10.105/' },
+    { label: 'IT Central Portal', url: 'http://10.40.10.125/itweb/' }
+];
 
 const store = new Store({
     name: 'desktop-state',
@@ -159,6 +163,13 @@ function createAppMenu() {
             ]
         },
         {
+            label: 'Our sites',
+            submenu: OUR_SITES.map(site => ({
+                label: site.label,
+                click: () => shell.openExternal(site.url)
+            }))
+        },
+        {
             label: 'Help',
             submenu: [
                 {
@@ -278,15 +289,125 @@ function setupIpc() {
         store.set(AUTH_STORE_KEY, {});
     });
 
-    ipcMain.on('notification:show', (event, title, body) => {
+    ipcMain.on('notification:show', (event, title, body, payload = {}) => {
         if (!Notification.isSupported()) return;
 
-        new Notification({
+        const notification = new Notification({
             title: title || APP_NAME,
             body: body || '',
             icon: path.join(__dirname, 'it_support.png')
-        }).show();
+        });
+
+        notification.on('click', () => {
+            showMainWindow();
+            mainWindow?.webContents.send('desktop:notification-click', payload);
+        });
+        notification.show();
     });
+
+    ipcMain.on('file:open-browser', (event, fileUrl) => {
+        let fullUrl = fileUrl;
+        if (fileUrl && fileUrl.startsWith('/')) {
+            fullUrl = APP_URL + fileUrl;
+        }
+        shell.openExternal(fullUrl).catch((err) => {
+            console.error('Error opening URL in browser:', err);
+        });
+    });
+
+    ipcMain.on('file:open-buffer', (event, buffer, fileName) => {
+        const tempDir = app.getPath('temp');
+        const safeName = path.basename(fileName || 'document');
+        const filePath = path.join(tempDir, `itsupport-${Date.now()}-${safeName}`);
+
+        fs.writeFile(filePath, Buffer.from(buffer), (writeErr) => {
+            if (writeErr) {
+                console.error('Error writing temp file:', writeErr);
+                return;
+            }
+
+            shell.openPath(filePath).then((openErr) => {
+                if (openErr) {
+                    console.error('Error opening file:', openErr);
+                }
+            });
+        });
+    });
+
+    ipcMain.on('file:open-external', (event, fileUrl, fileName) => {
+        downloadAndOpenExternalFile(fileUrl, fileName);
+    });
+}
+
+function resolveDownloadUrl(fileUrl) {
+    if (!fileUrl) return '';
+    if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
+        return fileUrl;
+    }
+    if (fileUrl.startsWith('/')) {
+        return APP_URL + fileUrl;
+    }
+    return fileUrl;
+}
+
+function downloadAndOpenExternalFile(fileUrl, fileName, redirectCount = 0) {
+    if (redirectCount > 5) {
+        console.error('Too many redirects while downloading file');
+        return;
+    }
+
+    const fullUrl = resolveDownloadUrl(fileUrl);
+    const tempDir = app.getPath('temp');
+    const safeName = path.basename(fileName || 'document');
+    const filePath = path.join(tempDir, `itsupport-${Date.now()}-${safeName}`);
+
+    const request = net.request({
+        method: 'GET',
+        url: fullUrl,
+        session: getAppSession()
+    });
+
+    request.on('response', (response) => {
+        const statusCode = response.statusCode || 0;
+
+        if (statusCode >= 300 && statusCode < 400) {
+            const location = response.headers.location;
+            const nextUrl = Array.isArray(location) ? location[0] : location;
+            if (nextUrl) {
+                downloadAndOpenExternalFile(nextUrl, fileName, redirectCount + 1);
+            }
+            return;
+        }
+
+        if (statusCode !== 200) {
+            console.error('Failed to download file:', statusCode, fullUrl);
+            return;
+        }
+
+        const file = fs.createWriteStream(filePath);
+        response.pipe(file);
+
+        file.on('finish', () => {
+            file.close(() => {
+                shell.openPath(filePath).then((openErr) => {
+                    if (openErr) {
+                        console.error('Error opening file:', openErr);
+                    }
+                });
+            });
+        });
+
+        file.on('error', (err) => {
+            fs.unlink(filePath, () => {});
+            console.error('Error writing downloaded file:', err);
+        });
+    });
+
+    request.on('error', (err) => {
+        console.error('Error downloading file:', err);
+    });
+
+    request.end();
 }
 
 function setupSessionPermissions() {

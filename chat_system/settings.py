@@ -37,6 +37,7 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -75,13 +76,13 @@ ASGI_APPLICATION = 'chat_system.asgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'mssql',
-        'NAME': 'ITSupport',
-        'USER': 'sa',
-        'PASSWORD': 'sqlsa@2012',
-        'HOST': 'PC2004',
-        'PORT': '1433',
+        'NAME': os.environ.get('DB_NAME', 'ITSupport'),
+        'USER': os.environ.get('DB_USER', 'sa'),
+        'PASSWORD': os.environ.get('DB_PASSWORD', 'ccise054879+m'),
+        'HOST': os.environ.get('DB_HOST', '10.40.10.125'),
+        'PORT': os.environ.get('DB_PORT', '1433'),
         'OPTIONS': {
-            'driver': 'SQL Server Native Client 11.0',
+            'driver': os.environ.get('DB_DRIVER', 'SQL Server Native Client 11.0'),
         },
     },
 
@@ -125,10 +126,22 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 STATICFILES_DIRS = [BASE_DIR / 'static']
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 # Media files
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+# Allow overriding media storage location in production via environment variable
+# Example: set DJANGO_MEDIA_ROOT=C:\inetpub\wwwroot\ITSup\ITSupport\media
+media_root_env = os.environ.get('DJANGO_MEDIA_ROOT', '').strip()
+default_media_root = BASE_DIR / 'media'
+deployed_media_root = Path(r'C:\inetpub\wwwroot\ITSup\ITSupport\media')
+
+if media_root_env:
+    MEDIA_ROOT = Path(media_root_env)
+elif deployed_media_root.exists():
+    MEDIA_ROOT = deployed_media_root
+else:
+    MEDIA_ROOT = default_media_root
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -193,3 +206,42 @@ LOGGING = {
         'level': 'INFO',
     },
 }
+
+
+
+
+
+
+
+
+
+
+# cd C:\inetpub\wwwroot\ITSupport
+# set DJANGO_SETTINGS_MODULE=chat_system.settings
+# set DJANGO_MEDIA_ROOT = 'C:\inetpub\wwwroot\ITSup\ITSupport\media'
+# set DJANGO_SECRET_KEY=1234
+# set DEBUG=False
+# set ALLOWED_HOSTS=10.40.10.125,localhost,127.0.0.1
+# set DB_HOST=10.40.10.125
+# set DB_NAME=ITSupport
+# set DB_USER=sa
+# set DB_PASSWORD=ccise054879+m
+# python -m daphne -b 0.0.0.0 -p 8001 chat_system.asgi:application
+
+# set DJANGO_SETTINGS_MODULE=chat_system.settings
+# set DJANGO_MEDIA_ROOT=C:\inetpub\wwwroot\ITSup\ITSupport\media
+# set DJANGO_SECRET_KEY=1234
+# set DEBUG=False
+# set ALLOWED_HOSTS=10.40.10.125,localhost,127.0.0.1
+# set DB_HOST=10.40.10.125
+# set DB_NAME=ITSupport
+# set DB_USER=sa
+# set DB_PASSWORD=ccise054879+m
+# python -m daphne -b 0.0.0.0 -p 8001 chat_system.asgi:application
+
+# $src = 'C:\$Recycle.Bin'
+# $dst = 'C:\inetpub\wwwroot\ITSup\ITSupport\media\chat_media\39'
+# New-Item -ItemType Directory -Path $dst -Force
+# Get-ChildItem -Path $src -Recurse -File -ErrorAction SilentlyContinue |
+#   Where-Object { $_.FullName -match '\\media\\chat_media\\39\\' } |
+#   Copy-Item -Destination $dst -Force -Verbose

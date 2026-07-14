@@ -1,6 +1,6 @@
 {
   "name": "it-support",
-  "version": "1.0.8",
+  "version": "1.0.14",
   "description": "IT Support Desktop Application",
   "main": "main.js",
   "scripts": {

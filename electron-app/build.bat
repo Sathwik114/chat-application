@@ -14,6 +14,6 @@ echo Build complete!
 echo Check the 'dist' folder for your .exe file
 echo.
 echo The installer will be located at:
-echo   dist\IT Support Setup 1.0.3.exe
+echo   dist\IT Support Setup 1.0.13.exe
 echo.
 pause

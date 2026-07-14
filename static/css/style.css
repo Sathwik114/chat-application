@@ -1,4 +1,4 @@
-﻿* {
+* {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
@@ -2520,7 +2520,7 @@ body {
 
 .file-viewer-close {
     position: absolute;
-    top: 20px;
+    top: max(20px, env(safe-area-inset-top));
     right: 20px;
     background: rgba(0, 0, 0, 0.5);
     border: none;
@@ -2530,7 +2530,8 @@ body {
     height: 50px;
     border-radius: 50%;
     cursor: pointer;
-    z-index: 10001;
+    /* ensure this sits above embedded PDF toolbars and iframes */
+    z-index: 2147483647;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -2548,7 +2549,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0;
+    /* add top padding so browser PDF toolbars don't overlap the close button */
+    padding: 24px 0 0 0;
     overflow: hidden;
     height: 100%;
 }
@@ -3092,4 +3094,211 @@ body {
 .in-chat-search input:focus {
     outline: none;
     background: #374045;
+}
+
+/* Image Viewer Wrapper and Zoom Styles */
+.image-viewer-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.image-viewer-toolbar {
+    position: absolute;
+    bottom: 30px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(32, 44, 51, 0.85);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 8px 16px;
+    border-radius: 30px;
+    display: flex;
+    gap: 15px;
+    z-index: 10002;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.zoom-btn {
+    background: none;
+    border: none;
+    color: #e9edef;
+    font-size: 18px;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.zoom-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #00a884;
+}
+
+/* Document Viewer Modal Styles */
+.document-viewer-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 90%;
+    max-width: 460px;
+    background: #111b21;
+    border-radius: 16px;
+    border: 1px solid rgba(0, 168, 132, 0.3);
+    padding: 35px 25px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6);
+    margin: 20px auto;
+    text-align: center;
+}
+
+.document-info-card {
+    margin-bottom: 25px;
+    width: 100%;
+}
+
+.document-icon-large {
+    margin-bottom: 15px;
+    animation: docBounce 2.5s infinite ease-in-out;
+}
+
+@keyframes docBounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+
+.document-name-large {
+    color: #e9edef;
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    word-break: break-all;
+    line-height: 1.4;
+}
+
+.document-meta-large {
+    color: #8696a0;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.document-viewer-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+}
+
+.doc-action-btn {
+    padding: 12px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    transition: all 0.2s ease;
+    width: 100%;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.doc-action-btn.open-btn {
+    background: #2a3942;
+    color: #e9edef;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.doc-action-btn.open-btn:hover {
+    background: #37474f;
+    transform: translateY(-2px);
+}
+
+.doc-action-btn.save-btn {
+    background: linear-gradient(135deg, #00a884 0%, #00d4ff 100%);
+    color: #111b21;
+    box-shadow: 0 4px 15px rgba(0, 168, 132, 0.3);
+}
+
+.doc-action-btn.save-btn:hover {
+    background: linear-gradient(135deg, #008f72 0%, #00b8e6 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 168, 132, 0.5);
+}
+
+/* PDF Preview Modal Styling */
+.pdf-viewer-wrapper {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: #111b21;
+}
+
+.pdf-viewer-toolbar {
+    padding: 15px 25px;
+    background: #202c33;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #2a3942;
+    z-index: 10002;
+}
+
+.pdf-title {
+    color: #e9edef;
+    font-size: 16px;
+    font-weight: 500;
+    text-overflow: ellipsis;
+    overflow: hidden;
+    white-space: nowrap;
+    max-width: 60%;
+}
+
+.pdf-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.pdf-btn {
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.pdf-btn#pdfOpenBtn {
+    background: #2a3942;
+    color: #e9edef;
+}
+
+.pdf-btn#pdfOpenBtn:hover {
+    background: #37474f;
+}
+
+.pdf-btn#pdfSaveBtn {
+    background: linear-gradient(135deg, #00a884 0%, #00d4ff 100%);
+    color: #111b21;
+}
+
+.pdf-btn#pdfSaveBtn:hover {
+    background: linear-gradient(135deg, #008f72 0%, #00b8e6 100%);
 }

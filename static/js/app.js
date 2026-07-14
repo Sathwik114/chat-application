@@ -8,9 +8,12 @@ let selectedMembers = [];
 let typingTimeout = null;
 let itMaintainUsers = [];
 let itMembershipHistory = [];
+let activeClickedImg = null;
+let imageViewerDragHandlers = null;
 
 function isElectronApp() {
-    return typeof navigator === 'object' && navigator.userAgent.includes('Electron');
+    return !!(window.electronAPI && window.electronAPI.isElectron) ||
+        (typeof navigator === 'object' && navigator.userAgent.includes('Electron'));
 }
 
 function isCurrentUserItMember() {
@@ -232,7 +235,7 @@ function setupEventListeners() {
     // File viewer modal
     const closeFileViewerModal = document.getElementById('closeFileViewerModal');
     if (closeFileViewerModal) {
-        closeFileViewerModal.addEventListener('click', () => closeModal('fileViewerModal'));
+        closeFileViewerModal.addEventListener('click', () => closeFileViewer());
     }
 
     const closeGroupInfoModal = document.getElementById('closeGroupInfoModal');
@@ -249,9 +252,28 @@ function setupEventListeners() {
     document.querySelectorAll('.modal').forEach(modal => {
         modal.addEventListener('click', (e) => {
             if (e.target === modal) {
-                closeModal(modal.id);
+                if (modal.id === 'fileViewerModal') {
+                    closeFileViewer();
+                } else {
+                    closeModal(modal.id);
+                }
             }
         });
+    });
+
+    // Open attachments consistently across chats, help desk, and other screens
+    document.addEventListener('click', (e) => {
+        const mediaFile = e.target.closest('.media-file');
+        if (!mediaFile || !mediaFile.dataset.fileUrl) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+
+        activeClickedImg = mediaFile.tagName === 'IMG'
+            ? mediaFile
+            : (mediaFile.querySelector('img, video') || mediaFile);
+
+        openFile(mediaFile.dataset.fileUrl, mediaFile.dataset.fileName, mediaFile.dataset.messageType);
     });
 
     // Chat menu
@@ -1299,13 +1321,14 @@ function createMessageElement(msg) {
 
     // Media content
     if (msg.message_type !== 'text' && msg.media_file) {
+        const mediaUrl = getAbsoluteFileUrl(msg.media_file);
         if (msg.message_type === 'image') {
-            content += `<img src="${msg.media_file}" class="message-media media-file" data-file-url="${msg.media_file}" data-file-name="${msg.file_name}" alt="Image" style="cursor: pointer;">`;
+            content += `<img src="${mediaUrl}" class="message-media media-file" data-file-url="${mediaUrl}" data-file-name="${msg.file_name || ''}" data-message-type="${msg.message_type}" alt="Image" style="cursor: pointer;">`;
         } else if (msg.message_type === 'video') {
-            content += `<video src="${msg.media_file}" class="message-media media-file" data-file-url="${msg.media_file}" data-file-name="${msg.file_name}" controls style="cursor: pointer;"></video>`;
+            content += `<video src="${mediaUrl}" class="message-media media-file" data-file-url="${mediaUrl}" data-file-name="${msg.file_name || ''}" data-message-type="${msg.message_type}" controls style="cursor: pointer;"></video>`;
         } else {
             content += `
-                <div class="message-media file-message media-file" data-file-url="${msg.media_file}" data-file-name="${msg.file_name}" style="background: #202c33; padding: 12px; border-radius: 8px; cursor: pointer;">
+                <div class="message-media file-message media-file" data-file-url="${mediaUrl}" data-file-name="${msg.file_name || ''}" data-message-type="${msg.message_type}" style="background: #202c33; padding: 12px; border-radius: 8px; cursor: pointer;">
                     <i class="fas fa-file" style="font-size: 24px; margin-bottom: 8px;"></i>
                     <div>${msg.file_name}</div>
                     <div style="color: #00a884; font-size: 12px;">Click to open</div>
@@ -1366,82 +1389,466 @@ function createMessageElement(msg) {
         });
     }
 
-    // Add click listener for all media files
-    const mediaFiles = div.querySelectorAll('.media-file');
-    if (mediaFiles.length > 0) {
-        console.log('Media files found:', mediaFiles.length);
-        mediaFiles.forEach(mediaFile => {
-            console.log('Media file found:', mediaFile);
-            console.log('File URL:', mediaFile.dataset.fileUrl);
-            console.log('File name:', mediaFile.dataset.fileName);
-            mediaFile.addEventListener('click', (e) => {
-                console.log('Media file clicked!');
-                e.stopPropagation();
-                const fileUrl = mediaFile.dataset.fileUrl;
-                const fileName = mediaFile.dataset.fileName;
-                console.log('Opening file:', fileUrl, fileName);
-                openFile(fileUrl, fileName);
-            });
-        });
-    } else {
-        console.log('No media files found in this message');
-    }
-
     return div;
 }
 
-// Open file like WhatsApp
-function openFile(fileUrl, fileName) {
-    console.log('openFile called with:', fileUrl, fileName);
+function escapeAttr(text) {
+    return escapeHtml(String(text || '')).replace(/`/g, '&#96;');
+}
 
-    // For images, open in modal
-    if (fileName.match(/\.(jpg|jpeg|png|gif|webp)$/i)) {
-        console.log('Opening image in modal');
-        openFileViewer(fileUrl, 'image');
+function getFileBaseName(fileName) {
+    const cleaned = String(fileName || '').split('?')[0].trim();
+    if (!cleaned) return '';
+    const parts = cleaned.split('/');
+    return parts[parts.length - 1] || cleaned;
+}
+
+function resolveFileName(fileUrl, fileName, messageType) {
+    let name = getFileBaseName(fileName) || getFileBaseName(fileUrl) || 'file';
+
+    if (!/\.[a-z0-9]{2,5}$/i.test(name)) {
+        if (messageType === 'image') name += '.jpg';
+        else if (messageType === 'video') name += '.mp4';
     }
-    // For videos, open in modal
-    else if (fileName.match(/\.(mp4|webm|ogg|avi|mov)$/i)) {
-        console.log('Opening video in modal');
-        openFileViewer(fileUrl, 'video');
+
+    return name;
+}
+
+function getFileKind(fileUrl, fileName, messageType) {
+    const resolvedName = resolveFileName(fileUrl, fileName, messageType);
+    const baseName = getFileBaseName(resolvedName).toLowerCase();
+
+    if (messageType === 'image') return 'image';
+    if (messageType === 'video') return 'video';
+    if (/\.(jpg|jpeg|png|gif|webp)$/i.test(baseName)) return 'image';
+    if (/\.(mp4|webm|ogg|avi|mov)$/i.test(baseName)) return 'video';
+    if (/\.pdf$/i.test(baseName)) return 'pdf';
+    return 'document';
+}
+
+function getAbsoluteFileUrl(fileUrl) {
+    if (!fileUrl) return '';
+
+    const rawUrl = String(fileUrl).trim();
+    if (!rawUrl) return '';
+
+    if (/^https?:\/\//i.test(rawUrl)) {
+        try {
+            const parsedUrl = new URL(rawUrl);
+            if (parsedUrl.pathname.startsWith('/media/')) {
+                const relativePath = parsedUrl.pathname.replace(/^\/media\//, '').split('/').map(segment => encodeURIComponent(segment)).join('/');
+                return `${window.location.origin}/api/messaging/media/${relativePath}`;
+            }
+            return rawUrl;
+        } catch (error) {
+            return rawUrl;
+        }
     }
-    // For PDFs, open in modal
-    else if (fileName.match(/\.pdf$/i)) {
-        console.log('Opening PDF in modal');
-        openFileViewer(fileUrl, 'pdf');
+
+    if (rawUrl.startsWith('/media/')) {
+        const relativePath = rawUrl.replace(/^\/media\//, '').split('/').map(segment => encodeURIComponent(segment)).join('/');
+        return `${window.location.origin}/api/messaging/media/${relativePath}`;
     }
-    // For documents and other files, trigger download
-    else {
-        console.log('Downloading document:', fileName);
-        const link = document.createElement('a');
-        link.href = fileUrl;
-        link.download = fileName;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
+    if (rawUrl.startsWith('/')) {
+        return `${window.location.origin}${rawUrl}`;
+    }
+    return rawUrl;
+}
+
+function openPdfInBrowser(fileUrl) {
+    const absoluteUrl = getAbsoluteFileUrl(fileUrl);
+    if (window.electronAPI && window.electronAPI.openFileBrowser) {
+        window.electronAPI.openFileBrowser(absoluteUrl);
+        return;
+    }
+    if (isElectronApp()) {
+        window.postMessage({
+            type: 'desktop-file-open-browser',
+            fileUrl: absoluteUrl
+        }, '*');
+        return;
+    }
+    window.open(absoluteUrl, '_blank');
+}
+
+function cleanupImageViewerHandlers() {
+    if (!imageViewerDragHandlers) return;
+    window.removeEventListener('mousemove', imageViewerDragHandlers.onMove);
+    window.removeEventListener('mouseup', imageViewerDragHandlers.onUp);
+    imageViewerDragHandlers = null;
+}
+
+async function sendFileBufferToDesktop(buffer, fileName) {
+    const byteArray = Array.from(new Uint8Array(buffer));
+
+    if (window.electronAPI && window.electronAPI.openFileBuffer) {
+        window.electronAPI.openFileBuffer(byteArray, fileName);
+        return true;
+    }
+
+    if (isElectronApp()) {
+        window.postMessage({
+            type: 'desktop-file-open-buffer',
+            buffer: byteArray,
+            fileName: fileName
+        }, '*');
+        return true;
+    }
+
+    return false;
+}
+
+function sendFileUrlToDesktop(fileUrl, fileName) {
+    if (window.electronAPI && window.electronAPI.openFileExternal) {
+        window.electronAPI.openFileExternal(fileUrl, fileName);
+        return true;
+    }
+
+    if (isElectronApp()) {
+        window.postMessage({
+            type: 'desktop-file-open',
+            fileUrl: fileUrl,
+            fileName: fileName
+        }, '*');
+        return true;
+    }
+
+    return false;
+}
+
+async function openDocumentExternally(fileUrl, fileName) {
+    const resolvedName = resolveFileName(fileUrl, fileName);
+    const absoluteUrl = getAbsoluteFileUrl(fileUrl);
+
+    try {
+        if (isElectronApp()) {
+            if (sendFileUrlToDesktop(absoluteUrl, resolvedName)) {
+                return;
+            }
+        }
+
+        const opened = window.open(absoluteUrl, '_blank', 'noopener,noreferrer');
+        if (!opened) {
+            showToast('Please allow pop-ups to open this file', 'error');
+        }
+    } catch (error) {
+        console.error('Unable to open document:', error);
+        if (isElectronApp() && sendFileUrlToDesktop(absoluteUrl, resolvedName)) {
+            return;
+        }
+        showToast('Unable to open file. Please try again.', 'error');
+    }
+}
+
+// Images/videos/PDF in-app, documents in WPS/Office
+function openFile(fileUrl, fileName, messageType) {
+    if (!fileUrl) return;
+
+    const resolvedName = resolveFileName(fileUrl, fileName, messageType);
+    const kind = getFileKind(fileUrl, fileName, messageType);
+
+    if (kind === 'image') {
+        openFileViewer(fileUrl, 'image', resolvedName);
+    } else if (kind === 'video') {
+        openFileViewer(fileUrl, 'video', resolvedName);
+    } else if (kind === 'pdf') {
+        openFileViewer(fileUrl, 'pdf', resolvedName);
+    } else {
+        openDocumentExternally(fileUrl, resolvedName);
     }
 }
 
 // Open file in WhatsApp-style modal viewer
-function openFileViewer(fileUrl, fileType) {
-    console.log('openFileViewer called with:', fileUrl, fileType);
+async function openFileViewer(fileUrl, fileType, fileName) {
+    cleanupImageViewerHandlers();
 
     const container = document.getElementById('fileViewerContainer');
-    console.log('File viewer container found:', container);
-
-    if (fileType === 'image') {
-        console.log('Setting image content');
-        container.innerHTML = `<img src="${fileUrl}" alt="Image">`;
-    } else if (fileType === 'video') {
-        console.log('Setting video content');
-        container.innerHTML = `<video src="${fileUrl}" controls autoplay></video>`;
-    } else if (fileType === 'pdf') {
-        console.log('Opening PDF in new window');
-        window.open(fileUrl, '_blank');
-        return; // Don't open modal for PDFs
+    const modal = document.getElementById('fileViewerModal');
+    if (!container || !modal) {
+        showToast('Unable to open file viewer', 'error');
+        return;
     }
 
-    console.log('Calling openModal for fileViewerModal');
-    openModal('fileViewerModal');
+    const sanitizedUrl = getAbsoluteFileUrl(fileUrl);
+    const displayUrl = escapeAttr(sanitizedUrl);
+
+    if (fileType === 'image') {
+        container.innerHTML = `
+            <div class="image-viewer-wrapper">
+                <img id="zoomedImage" src="" alt="Image" style="transform: translate(0px, 0px) scale(1); cursor: grab; transition: transform 0.1s ease-out;">
+                <div class="image-viewer-toolbar">
+                    <button class="zoom-btn" id="zoomInBtn" title="Zoom In"><i class="fas fa-search-plus"></i></button>
+                    <button class="zoom-btn" id="zoomOutBtn" title="Zoom Out"><i class="fas fa-search-minus"></i></button>
+                    <button class="zoom-btn" id="zoomResetBtn" title="Reset"><i class="fas fa-expand-arrows-alt"></i></button>
+                </div>
+            </div>
+        `;
+
+        const zoomedImage = document.getElementById('zoomedImage');
+        const zoomInBtn = document.getElementById('zoomInBtn');
+        const zoomOutBtn = document.getElementById('zoomOutBtn');
+        const zoomResetBtn = document.getElementById('zoomResetBtn');
+
+        if (!zoomedImage || !zoomInBtn || !zoomOutBtn || !zoomResetBtn) {
+            showToast('Unable to open image viewer', 'error');
+            return;
+        }
+
+        zoomedImage.onerror = () => {
+            showToast('Unable to load image', 'error');
+            closeFileViewer();
+        };
+
+        zoomedImage.onload = () => {
+            if (zoomedImage.src.startsWith('blob:')) {
+                return;
+            }
+        };
+
+        let scale = 1;
+        let translateX = 0;
+        let translateY = 0;
+        let isDragging = false;
+        let startX = 0;
+        let startY = 0;
+
+        const updateTransform = () => {
+            zoomedImage.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+            zoomedImage.style.cursor = scale > 1 ? 'grab' : 'default';
+        };
+
+        zoomInBtn.onclick = (e) => {
+            e.stopPropagation();
+            scale = Math.min(scale * 1.25, 8);
+            updateTransform();
+        };
+
+        zoomOutBtn.onclick = (e) => {
+            e.stopPropagation();
+            scale = Math.max(scale / 1.25, 0.5);
+            if (scale <= 1) {
+                translateX = 0;
+                translateY = 0;
+            }
+            updateTransform();
+        };
+
+        zoomResetBtn.onclick = (e) => {
+            e.stopPropagation();
+            scale = 1;
+            translateX = 0;
+            translateY = 0;
+            updateTransform();
+        };
+
+        const onMove = (e) => {
+            if (!isDragging) return;
+            translateX = e.clientX - startX;
+            translateY = e.clientY - startY;
+            updateTransform();
+        };
+
+        const onUp = () => {
+            if (!isDragging) return;
+            isDragging = false;
+            zoomedImage.style.cursor = 'grab';
+        };
+
+        imageViewerDragHandlers = { onMove, onUp };
+
+        zoomedImage.addEventListener('mousedown', (e) => {
+            if (scale > 1) {
+                isDragging = true;
+                zoomedImage.style.cursor = 'grabbing';
+                startX = e.clientX - translateX;
+                startY = e.clientY - translateY;
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomFactor = 1.1;
+            if (e.deltaY < 0) {
+                scale = Math.min(scale * zoomFactor, 8);
+            } else {
+                scale = Math.max(scale / zoomFactor, 0.5);
+                if (scale <= 1) {
+                    translateX = 0;
+                    translateY = 0;
+                }
+            }
+            updateTransform();
+        }, { passive: false });
+
+        zoomedImage.src = displayUrl;
+
+        if (activeClickedImg && activeClickedImg.getBoundingClientRect) {
+            const rect = activeClickedImg.getBoundingClientRect();
+            zoomedImage.style.transition = 'none';
+            zoomedImage.style.position = 'fixed';
+            zoomedImage.style.top = rect.top + 'px';
+            zoomedImage.style.left = rect.left + 'px';
+            zoomedImage.style.width = rect.width + 'px';
+            zoomedImage.style.height = rect.height + 'px';
+            zoomedImage.style.objectFit = 'cover';
+            zoomedImage.style.borderRadius = getComputedStyle(activeClickedImg).borderRadius;
+
+            modal.classList.add('active');
+            modal.style.opacity = '0';
+            modal.style.transition = 'opacity 0.25s ease';
+            void modal.offsetWidth;
+            modal.style.opacity = '1';
+
+            setTimeout(() => {
+                zoomedImage.style.transition = 'all 0.3s cubic-bezier(0.1, 0.8, 0.25, 1)';
+                zoomedImage.style.position = 'absolute';
+                zoomedImage.style.top = '50%';
+                zoomedImage.style.left = '50%';
+                zoomedImage.style.width = 'auto';
+                zoomedImage.style.height = 'auto';
+                zoomedImage.style.maxWidth = '100vw';
+                zoomedImage.style.maxHeight = '100vh';
+                zoomedImage.style.transform = 'translate(-50%, -50%) scale(1)';
+                zoomedImage.style.objectFit = 'contain';
+                zoomedImage.style.borderRadius = '0';
+            }, 10);
+        } else {
+            modal.classList.add('active');
+        }
+    } else if (fileType === 'video') {
+        console.log('Setting video content');
+        container.innerHTML = `<video src="${displayUrl}" controls autoplay style="max-width: 100%; max-height: 100%;"></video>`;
+        modal.classList.add('active');
+    } else if (fileType === 'pdf') {
+        container.innerHTML = `
+            <div class="pdf-viewer-wrapper">
+                <div class="pdf-viewer-toolbar">
+                    <span class="pdf-title">${escapeHtml(fileName)}</span>
+                </div>
+                <iframe id="pdfViewerFrame" title="${escapeHtml(fileName)}" style="flex: 1; width: 100%; height: 100%; border: none;"></iframe>
+            </div>
+        `;
+        const pdfFrame = document.getElementById('pdfViewerFrame');
+        pdfFrame.src = displayUrl;
+        modal.classList.add('active');
+    } else if (fileType === 'document') {
+        const ext = fileName.split('.').pop().toLowerCase();
+        let docIconHtml = '';
+        
+        switch (ext) {
+            case 'doc':
+            case 'docx':
+                docIconHtml = '<i class="fas fa-file-word" style="color: #2196f3; font-size: 64px;"></i>';
+                break;
+            case 'xls':
+            case 'xlsx':
+                docIconHtml = '<i class="fas fa-file-excel" style="color: #4caf50; font-size: 64px;"></i>';
+                break;
+            case 'ppt':
+            case 'pptx':
+                docIconHtml = '<i class="fas fa-file-powerpoint" style="color: #ff9800; font-size: 64px;"></i>';
+                break;
+            case 'zip':
+            case 'rar':
+            case '7z':
+            case 'tar':
+            case 'gz':
+                docIconHtml = '<i class="fas fa-file-archive" style="color: #9c27b0; font-size: 64px;"></i>';
+                break;
+            case 'txt':
+                docIconHtml = '<i class="fas fa-file-alt" style="color: #607d8b; font-size: 64px;"></i>';
+                break;
+            default:
+                docIconHtml = '<i class="fas fa-file" style="color: #aebac1; font-size: 64px;"></i>';
+        }
+
+        container.innerHTML = `
+            <div class="document-viewer-wrapper">
+                <div class="document-info-card">
+                    <div class="document-icon-large">${docIconHtml}</div>
+                    <div class="document-name-large">${escapeHtml(fileName)}</div>
+                    <div class="document-meta-large">${ext.toUpperCase()} Document</div>
+                </div>
+                <div class="document-viewer-actions">
+                    <button class="doc-action-btn open-btn" id="docOpenBtn">
+                        <i class="fas fa-external-link-alt"></i> Open
+                    </button>
+                    <button class="doc-action-btn save-btn" id="docSaveBtn">
+                        <i class="fas fa-download"></i> Save / Download
+                    </button>
+                </div>
+            </div>
+        `;
+
+        const inlineUrl = getAbsoluteFileUrl(fileUrl);
+
+        document.getElementById('docOpenBtn').onclick = (e) => {
+            e.stopPropagation();
+            window.open(inlineUrl, '_blank');
+        };
+
+        document.getElementById('docSaveBtn').onclick = (e) => {
+            e.stopPropagation();
+            const link = document.createElement('a');
+            link.href = inlineUrl;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+
+        modal.classList.add('active');
+    }
+}
+
+// Close file viewer with animation back to its location
+function closeFileViewer() {
+    const modal = document.getElementById('fileViewerModal');
+    const zoomedImage = document.getElementById('zoomedImage');
+
+    if (zoomedImage && activeClickedImg) {
+        const rect = activeClickedImg.getBoundingClientRect();
+        const currentRect = zoomedImage.getBoundingClientRect();
+        
+        zoomedImage.style.transition = 'none';
+        zoomedImage.style.position = 'fixed';
+        zoomedImage.style.top = currentRect.top + 'px';
+        zoomedImage.style.left = currentRect.left + 'px';
+        zoomedImage.style.width = currentRect.width + 'px';
+        zoomedImage.style.height = currentRect.height + 'px';
+        zoomedImage.style.transform = 'none';
+
+        void zoomedImage.offsetWidth; // Reflow
+
+        zoomedImage.style.transition = 'all 0.3s cubic-bezier(0.1, 0.8, 0.25, 1)';
+        zoomedImage.style.top = rect.top + 'px';
+        zoomedImage.style.left = rect.left + 'px';
+        zoomedImage.style.width = rect.width + 'px';
+        zoomedImage.style.height = rect.height + 'px';
+        zoomedImage.style.objectFit = 'cover';
+        zoomedImage.style.borderRadius = getComputedStyle(activeClickedImg).borderRadius;
+
+        modal.style.transition = 'opacity 0.25s ease';
+        modal.style.opacity = '0';
+
+        setTimeout(() => {
+            modal.classList.remove('active');
+            modal.style.opacity = '';
+            modal.style.transition = '';
+            const container = document.getElementById('fileViewerContainer');
+            container.innerHTML = '';
+            activeClickedImg = null;
+        }, 300);
+    } else {
+        modal.classList.remove('active');
+        const container = document.getElementById('fileViewerContainer');
+        container.innerHTML = '';
+        activeClickedImg = null;
+    }
 }
 
 // Get message status icon
@@ -3768,10 +4175,14 @@ function createContainerElement(container, isItMember) {
                                 <span>Attachment</span>
                             </div>
                             <div class="attachment-content">
-                                <a href="${container.attached_files}" target="_blank" download="${container.file_name || 'attachment'}" class="attachment-link">
-                                    <i class="fas fa-download"></i>
-                                    ${container.file_name || 'Download Attachment'}
-                                </a>
+                                <div class="attachment-link media-file"
+                                     data-file-url="${container.attached_files}"
+                                     data-file-name="${container.file_name || ''}"
+                                     data-message-type="file"
+                                     style="cursor: pointer;">
+                                    <i class="fas fa-paperclip"></i>
+                                    ${container.file_name || 'View Attachment'}
+                                </div>
                             </div>
                         </div>
                     ` : ''}

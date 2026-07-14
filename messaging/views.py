@@ -1,6 +1,6 @@
 from django.shortcuts import render, get_object_or_404
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
+from django.http import JsonResponse, FileResponse, Http404
 from django.views.decorators.http import require_http_methods
 from django.views.decorators.csrf import csrf_exempt
 from django.core.paginator import Paginator
@@ -19,15 +19,56 @@ from .utils import (
     strip_invisible_marks,
 )
 import json
+import mimetypes
+import logging
+from urllib.parse import unquote
 from authentication.models import User
 from authentication.views import get_employee_data_from_mssql
 import json
 import os
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
+from notifications.models import Notification
 
 def is_it_member_user(user):
     return user_has_it_role(user)
+
+
+def serve_media_file(request, file_path):
+    """Serve uploaded media files inline so PDFs and documents open in the browser."""
+    if not file_path:
+        raise Http404
+
+    logger = logging.getLogger(__name__)
+
+    # URL paths may be percent-encoded when passed from the frontend (e.g. spaces -> %20).
+    # Decode and normalize before joining with MEDIA_ROOT.
+    try:
+        decoded = unquote(file_path)
+    except Exception:
+        decoded = file_path
+
+    # Remove any leading slashes to avoid absolute path joins
+    decoded = decoded.lstrip('/\\')
+
+    media_root = os.path.realpath(settings.MEDIA_ROOT)
+    candidate_path = os.path.realpath(os.path.join(media_root, decoded))
+
+    logger.info('Serving media file request: raw=%s decoded=%s candidate=%s', file_path, decoded, candidate_path)
+
+    if (not candidate_path.startswith(media_root + os.sep) and candidate_path != media_root) or not os.path.isfile(candidate_path):
+        logger.warning('Media file not found or outside media root: %s', candidate_path)
+        raise Http404
+
+    content_type, _ = mimetypes.guess_type(candidate_path)
+    if not content_type:
+        content_type = 'application/octet-stream'
+
+    response = FileResponse(open(candidate_path, 'rb'), content_type=content_type)
+    response['Content-Disposition'] = f'inline; filename="{os.path.basename(candidate_path)}"'
+    response['X-Content-Type-Options'] = 'nosniff'
+    response['Cache-Control'] = 'public, max-age=86400'
+    return response
 
 
 def get_helpdesk_report_user_data(user, employee_cache):
@@ -54,8 +95,11 @@ def can_send_task_chat(user, task):
 
 def get_task_chat_unread_count(user, task):
     """Unread messages for user in a task chat (excluding user's own messages)."""
-    if not can_send_task_chat(user, task):
-        # Other IT members can view chat but should not receive unread counts.
+    can_receive_task_chat_notifications = (
+        can_send_task_chat(user, task) or
+        (is_it_member_user(user) and task.conversation.participants.filter(id=user.id).exists())
+    )
+    if not can_receive_task_chat_notifications:
         return 0
     try:
         state = TaskChatReadState.objects.filter(task=task, user=user).only('last_read_at').first()
@@ -142,6 +186,40 @@ def task_chat_message_to_dict(message, user):
         'timestamp': message.timestamp.isoformat(),
         'is_self': message.sender_id == user.id,
     }
+
+
+def push_message_notifications(message):
+    """Create and send realtime notifications for REST-created chat messages."""
+    channel_layer = get_channel_layer()
+    conversation = message.conversation
+    recipients = conversation.participants.exclude(id=message.sender_id)
+
+    for recipient in recipients:
+        notification = Notification.objects.create(
+            recipient=recipient,
+            message=message,
+            conversation=conversation,
+            notification_type='new_message'
+        )
+
+        if not channel_layer:
+            continue
+
+        async_to_sync(channel_layer.group_send)(
+            f'notifications_{recipient.id}',
+            {
+                'type': 'notification',
+                'notification': {
+                    'id': notification.id,
+                    'notification_type': notification.notification_type,
+                    'title': notification.title,
+                    'body': notification.body,
+                    'conversation_id': conversation.id,
+                    'message_id': message.id,
+                    'created_at': notification.created_at.isoformat(),
+                }
+            }
+        )
 
 
 @login_required
@@ -594,6 +672,7 @@ def send_message(request):
         
         # Update conversation timestamp
         conversation.save()
+        push_message_notifications(message)
         
         return JsonResponse({
             'success': True,
@@ -794,6 +873,8 @@ def upload_media(request):
             was_compressed=processed_upload['was_compressed'],
             status='sent'
         )
+        conversation.save()
+        push_message_notifications(message)
         
         return JsonResponse({
             'success': True,
